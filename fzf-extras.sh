@@ -1,28 +1,93 @@
 #!/usr/bin/env bash
 
+
 # -----------------------------------------------------------------------------
-# directory
+# New set of commands TODO: need spreate into sections
 # -----------------------------------------------------------------------------
+
+# set PATH so it includes user's private bin if it exists
+if [ -d "$HOME/bin" ] ; then
+    PATH="$HOME/bin:$PATH"
+fi
+
+# set PATH so it includes user's private bin if it exists
+if [ -d "$HOME/.local/bin" ] ; then
+    PATH="$HOME/.local/bin:$PATH"
+fi
+
+export PATH="$HOME/.cargo/bin:$PATH"
+export PATH="$HOME/minikube:$PATH"
+# export PATH="/c/ProgramData/chocolatey/bin:$PATH"
+
+export FZF_DEFAULT_COMMAND='ag --hidden --ignore .git -g ""'
+
+# -----------------------------------------------------------------------------
+# directory TODO: old part need to refactory
+# -----------------------------------------------------------------------------
+
+# Suggested by @mgild Like normal cd but opens an interactive navigation window when called with no arguments. For ls, use -FG instead of --color=always on osx.
+function cc() {
+    if [[ "$#" != 0 ]]; then
+        builtin cd "$@";
+        return
+    fi
+    while true; do
+        local lsd=$(echo ".." && /bin/ls -p | grep '/$' | sed 's;/$;;')
+        local dir="$(printf '%s\n' "${lsd[@]}" |
+            fzf --reverse --preview '
+                __cd_nxt="$(echo {})";
+                __cd_path="$(echo $(pwd)/${__cd_nxt} | sed "s;//;/;")";
+                echo $__cd_path;
+                echo;
+                ls -p --color=always "${__cd_path}";
+        ')"
+        [[ ${#dir} != 0 ]] || return 0
+        builtin cd "$dir" &> /dev/null
+    done
+}
+
+# like normal autojump when used with arguments but displays an fzf prompt when used without
+j() {
+    if [[ "$#" -ne 0 ]]; then
+        cd $(autojump $@)
+        return
+    fi
+    cd "$(autojump -s | sort -k1gr | awk '$1 ~ /[0-9]:/ && $2 ~ /^\// { for (i=2; i<=NF; i++) { print $(i) } }' |  fzf --height 40% --reverse --inline-info)" 
+}
+
+# fd - cd to selected directory
+fd() {
+  local dir
+  dir=$(find ${1:-.} -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf +m) &&
+  cd "$dir"
+}
+
+# fda - including hidden directories
+fda() {
+  local dir
+  dir=$(find ${1:-.} -type d 2> /dev/null | fzf +m) && cd "$dir"
+}
 
 # zdd - cd to selected directory
-zdd() {
-  local dir
-  dir="$(
-    find "${1:-.}" -path '*/\.*' -prune -o -type d -print 2> /dev/null \
-      | fzf +m
-  )" || return
-  cd "$dir" || return
-}
+# zdd() {
+#   local dir
+#   dir="$(
+#     find "${1:-.}" -path '*/\.*' -prune -o -type d -print 2> /dev/null \
+#       | fzf +m
+#   )" || return
+#   cd "$dir" || return
+# }
 
 # zda - including hidden directories
-zda() {
-  local dir
-  dir="$(
-    find "${1:-.}" -type d 2> /dev/null \
-      | fzf +m
-  )" || return
-  cd "$dir" || return
-}
+# zda() {
+#   local dir
+#   dir="$(
+#     find "${1:-.}" -type d 2> /dev/null \
+#       | fzf +m
+#   )" || return
+#   cd "$dir" || return
+# }
 
 # zdr - cd to selected parent directory
 zdr() {
@@ -62,12 +127,19 @@ zst() {
   fi
 }
 
-# zdf - cd into the directory of the selected file
-zdf() {
-  local file
-  file="$(fzf +m -q "$*")"
-  cd "$(dirname "$file")" || return
+# cdf - cd into the directory of the selected file
+fc() {
+   local file
+   local dir
+   file=$(fzf +m -q "$1") && dir=$(dirname "$file") && cd "$dir"
 }
+
+# zdf - cd into the directory of the selected file
+# zdf() {
+#   local file
+#   file="$(fzf +m -q "$*")"
+#   cd "$(dirname "$file")" || return
+# }
 
 # zz - selectable cd to frecency directory
 zz() {
@@ -146,8 +218,17 @@ EOF
 # file
 # -----------------------------------------------------------------------------
 
+# fe [FUZZY PATTERN] - Open the selected file with the default editor
+#   - Bypass fuzzy finder if there's only one match (--select-1)
+#   - Exit if there's no match (--exit-0)
+# fe() {
+#   local files
+#   IFS=$'\n' files=($(fzf-tmux --query="$1" --multi --select-1 --exit-0))
+#   [[ -n "$files" ]] && ${EDITOR:-vim} "${files[@]}"
+# }
+
 # e - open 'frecency' files in $VISUAL editor
-e() {
+ef() {
   local files
 
   files="$(
@@ -183,46 +264,79 @@ fe() {
   "${EDITOR:-vim}" "${files[@]}"
 }
 
-# fo - Modified version of fe() where you can press
-#   - CTRL-O to open with $OPENER,
-#   - CTRL-E or Enter key to open with $EDITOR
+# Modified version where you can press
+#   - CTRL-O to open with `open` command,
+#   - CTRL-E or Enter key to open with the $EDITOR
 fo() {
-  local IFS=$'\n'
-  local out=()
-  local key
-  local file
-
-  out=(
-    "$(
-        fzf-tmux \
-          --query="$1" \
-          --exit-0 \
-          --expect=ctrl-o,ctrl-e
-    )"
-  )
-  key="$(head -1 <<< "${out[@]}")"
-  file="$(head -2 <<< "${out[@]}" | tail -1)" || return
-
-  if [[ "$key" == ctrl-o ]]; then
-    "${OPENER:-xdg-open}" "$file"
-  else
-    "${EDITOR:-vim}" "$file"
+  local out file key
+  IFS=$'\n' out=("$(fzf-tmux --query="$1" --exit-0 --expect=ctrl-f,ctrl-e)")
+  key=$(head -1 <<< "$out")
+  file=$(head -2 <<< "$out" | tail -1)
+  if [ -n "$file" ]; then
+    [ "$key" = ctrl-f ] && open-bg "$file" || ${EDITOR:-vim} "$file"
   fi
 }
 
+# fo - Modified version of fe() where you can press
+#   - CTRL-O to open with $OPENER,
+#   - CTRL-E or Enter key to open with $EDITOR
+# fo() {
+#   local IFS=$'\n'
+#   local out=()
+#   local key
+#   local file
+
+#   out=(
+#     "$(
+#         fzf-tmux \
+#           --query="$1" \
+#           --exit-0 \
+#           --expect=ctrl-o,ctrl-e
+#     )"
+#   )
+#   key="$(head -1 <<< "${out[@]}")"
+#   file="$(head -2 <<< "${out[@]}" | tail -1)" || return
+
+#   if [[ "$key" == ctrl-o ]]; then
+#     "${OPENER:-xdg-open}" "$file"
+#   else
+#     "${EDITOR:-vim}" "$file"
+#   fi
+# }
+
+# using ripgrep combined with preview
+# find-in-file - usage: fif <searchTerm>
+# fif() {
+#   if [ ! "$#" -gt 0 ]; then echo "Need a string to search for!"; return 1; fi
+#   rg --files-with-matches --no-messages "$1" | fzf --preview "highlight -O ansi -l {} 2> /dev/null | rg --colors 'match:bg:yellow' --ignore-case --pretty --context 10 '$1' || rg --ignore-case --pretty --context 10 '$1' {}"
+# }
+
+# fuzzy grep open via ag with line number
+# vg() {
+#   local file
+#   local line
+
+#   read -r file line <<<"$(ag --nobreak --noheading $@ | fzf -0 -1 | awk -F: '{print $1, $2}')"
+
+#   if [[ -n $file ]]
+#   then
+#      vim $file +$line
+#   fi
+# }
+
 # v - open files in ~/.viminfo
-v() {
-  local files
-  files="$(
-    grep '^>' "$HOME/.viminfo" \
-      | cut -c3- \
-      | while read -r line; do
-          [[ -f "${line/\~/$HOME}" ]] && echo "$line"
-        done \
-      | fzf -m -0 -1 -q "$*"
-  )"
-  "${EDITOR:-vim}" "${files/\~/$HOME}"
-}
+# v() {
+#   local files
+#   files="$(
+#     grep '^>' "$HOME/.viminfo" \
+#       | cut -c3- \
+#       | while read -r line; do
+#           [[ -f "${line/\~/$HOME}" ]] && echo "$line"
+#         done \
+#       | fzf -m -0 -1 -q "$*"
+#   )"
+#   "${EDITOR:-vim}" "${files/\~/$HOME}"
+# }
 
 
 # -----------------------------------------------------------------------------
@@ -488,6 +602,20 @@ fzf-gitlog-multi-widget() {
 # history
 # -----------------------------------------------------------------------------
 
+# fh - repeat history
+# runcmd (){ perl -e 'ioctl STDOUT, 0x5412, $_ for split //, <>' ; }
+
+# fh() {
+#   ([ -n "$ZSH_NAME" ] && fc -l 1 || history) | fzf +s --tac | sed -re 's/^\s*[0-9]+\s*//' | runcmd
+# }
+
+# fhe - repeat history edit
+# writecmd (){ perl -e 'ioctl STDOUT, 0x5412, $_ for split //, do{ chomp($_ = <>); $_ }' ; }
+
+# fhe() {
+#   ([ -n "$ZSH_NAME" ] && fc -l 1 || history) | fzf +s --tac | sed -re 's/^\s*[0-9]+\s*//' | writecmd
+# }
+
 # runcmd - utility function used to run the command in the shell
 runcmd() {
   perl -e 'ioctl STDOUT, 0x5412, $_ for split //, <>'
@@ -519,19 +647,34 @@ fhe() {
 # pid
 # -----------------------------------------------------------------------------
 
-# fkill - kill process
+# fkill - kill processes - list only the ones you can kill. Modified the earlier script.
 fkill() {
-  local pid
+    local pid 
+    if [ "$UID" != "0" ]; then
+        pid=$(ps -f -u $UID | sed 1d | fzf -m | awk '{print $2}')
+    else
+        pid=$(ps -ef | sed 1d | fzf -m | awk '{print $2}')
+    fi  
 
-  pid="$(
-    ps -ef \
-      | sed 1d \
-      | fzf -m \
-      | awk '{print $2}'
-  )" || return
-
-  kill -"${1:-9}" "$pid"
+    if [ "x$pid" != "x" ]
+    then
+        echo $pid | xargs kill -${1:-9}
+    fi  
 }
+
+# fkill - kill process
+# fkill() {
+#   local pid
+
+#   pid="$(
+#     ps -ef \
+#       | sed 1d \
+#       | fzf -m \
+#       | awk '{print $2}'
+#   )" || return
+
+#   kill -"${1:-9}" "$pid"
+# }
 
 
 # -----------------------------------------------------------------------------
@@ -620,3 +763,79 @@ ftpane() {
 }
 
 # vim: set filetype=sh foldmethod=marker foldlevel=0:
+
+# -----------------------------------------------------------------------------
+# docker
+# -----------------------------------------------------------------------------
+
+# Select a docker container to start and attach to
+function da() {
+  local cid
+  cid=$(docker ps -a | sed 1d | fzf -1 -q "$1" | awk '{print $1}')
+
+  [ -n "$cid" ] && docker start "$cid" && docker attach "$cid"
+}
+# Select a running docker container to stop
+function ds() {
+  local cid
+  cid=$(docker ps | sed 1d | fzf -q "$1" | awk '{print $1}')
+
+  [ -n "$cid" ] && docker stop "$cid"
+}
+# Select a docker container to remove
+function drm() {
+  local cid
+  cid=$(docker ps -a | sed 1d | fzf -q "$1" | awk '{print $1}')
+
+  [ -n "$cid" ] && docker rm "$cid"
+}
+
+# -----------------------------------------------------------------------------
+# man page
+# -----------------------------------------------------------------------------
+
+fman() {
+    man -k . | fzf --prompt='Man> ' | awk '{print $1}' | xargs -r man
+}
+
+# -----------------------------------------------------------------------------
+# others
+# -----------------------------------------------------------------------------
+
+# Search and open website bookmarks stored in a buku database.
+fb() {
+    # save newline separated string into an array
+    mapfile -t website <<< "$(buku -p -f 5 | column -ts$'\t' | fzf --multi)"
+
+    # open each website
+    for i in "${website[@]}"; do
+        index="$(echo "$i" | awk '{print $1}')"
+        buku -p "$index"
+        buku -o "$index"
+    done
+}
+
+# greenclip daemon &
+# setxkbmap -option caps:swapescape
+
+# open folder in backgroud
+# of() {
+#         nautilus "$1" "&"
+# }
+
+# Your shell changes the directory only when you quit ranger with keybinding capital Q.
+# function ranger {
+#     local IFS=$'\t\n'
+#     local tempfile="$(mktemp -t tmp.XXXXXX)"
+#     local ranger_cmd=(
+#         command
+#         ranger
+#         --cmd="map Q chain shell echo %d > "$tempfile"; quitall"
+#     )
+    
+#     ${ranger_cmd[@]} "$@"
+#     if [[ -f "$tempfile" ]] && [[ "$(cat -- "$tempfile")" != "$(echo -n `pwd`)" ]]; then
+#         cd -- "$(cat "$tempfile")" || return
+#     fi
+#     command rm -f -- "$tempfile" 2>/dev/null
+# }
